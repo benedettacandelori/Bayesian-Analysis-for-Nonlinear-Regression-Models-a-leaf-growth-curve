@@ -4,8 +4,8 @@ The main purpose of this project is to show how Bayesian inference could be expl
 
 
 
-![gompertz](https://github.com/benedettacandelori/Bayesian-Analysis-for-Nonlinear-Regression-Models-a-leaf-growth-curve/blob/main/gompertz.pdf)
+![gompertz](https://github.com/benedettacandelori/Bayesian-Analysis-for-Nonlinear-Regression-Models-a-leaf-growth-curve/blob/main/gompertz.pdf?raw=true)
 
-![logistic](https://github.com/benedettacandelori/Bayesian-Analysis-for-Nonlinear-Regression-Models-a-leaf-growth-curve/blob/main/logistic.pdf)
+![logistic](https://github.com/benedettacandelori/Bayesian-Analysis-for-Nonlinear-Regression-Models-a-leaf-growth-curve/blob/main/logistic.pdf?raw=true)
 
-![richard](https://github.com/benedettacandelori/Bayesian-Analysis-for-Nonlinear-Regression-Models-a-leaf-growth-curve/blob/main/richard.pdf)
+![richard](https://github.com/benedettacandelori/Bayesian-Analysis-for-Nonlinear-Regression-Models-a-leaf-growth-curve/blob/main/richard.pdf?raw=true)
