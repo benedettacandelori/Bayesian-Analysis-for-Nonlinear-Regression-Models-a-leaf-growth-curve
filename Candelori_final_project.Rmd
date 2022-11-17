@@ -1,0 +1,1025 @@
+---
+title: "Bayesian Analysis for Nonlinear Regression Models: a leaf growth curve"
+author: "Bendetta Candelori"
+output:
+  pdf_document: 
+    toc: true 
+    toc_depth: 6
+    number_sections: true 
+header-includes: 
+            - \usepackage[english]{babel}
+            - \usepackage{amsmath}
+            - \usepackage{enumerate}
+            - \usepackage{setspace}
+            - \usepackage{docmute}
+            - \usepackage{fancyhdr}
+            - \usepackage{graphicx}
+            - \usepackage{rotating}
+            - \usepackage{ucs}
+            - \pagestyle{fancy}
+            - \fancyhf{}
+            - \rhead{Final Project}
+            - \cfoot{\thepage}
+            - \usepackage{multirow}
+            - \usepackage{longtable}
+           
+
+
+---
+
+
+```{r setup, include=FALSE}
+library(knitr)
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# the default output hook
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  if (!is.null(n <- options$out.lines)) {
+    x = unlist(stringr::str_split(x, '\n'))
+    if (length(x) > n) {
+      # truncate the output
+      x = c(head(x, n), '....\n')
+    }
+    x = paste(x, collapse = '\n') # paste first n lines together
+  }
+  hook_output(x, options)
+})
+```
+
+\newpage
+# Purpose of the project 
+
+The main purpose of this project is to show how Bayesian inference could be exploited to fit non-linear models for growth curve data. 
+
+Three widely used models are used to fit growth curve data: Gompertz, Richards and Logistic models which use few parameters having a biological interpretation to describe the entire growth process[Archontoulis et al.[^1]].
+
+This study aims to estimate these parameters both with the classical and with the Bayesian approach and compare their results.
+
+On one side, the Frequentist approach uses the nonlinear least squares (NLS) method, while on the other side, estimation of parameters with a Bayesian approach exploits the Markov Chain Monte Carlo (MCMC) methods. 
+
+
+
+[^1]:Archontoulis, S.V. & Miguez, Fernando. (2013). Nonlinear Regression Models and Applications in Agricultural Research. Agronomy Journal. 105. 1. 10.2134/agronj2012.0506.
+
+# Dataset 
+
+The dataset for this analysis is available in one of the R library called \texttt{NRAIA}. 
+Thus, firstly we need to install the package and then load the library.
+
+
+```{r, results='hide', warning=FALSE, error=FALSE}
+library(NRAIA)
+```
+
+Our dataset (called \texttt{Leaves}) contains information about the growth of the leaves over time and contains 15 rows and 2 variables:
+
+* Time: time from initial emergence (days);
+
+* Length: leaf length (cm).
+
+Here an overview of the data: 
+
+
+```{r, echo=FALSE}
+
+head(Leaves,5)
+
+```
+
+The following plot shows the variation of the length of leaves overtime. In addition, we can clearly observe from that the growth curve is not linear: firstly (in the early days) the length of the curve is small and increase quite rapidly after an *inflation* point, then the  growth of the leaves slows down again in the last days. 
+
+```{r, echo=FALSE, fig.height= 3.5, fig.width=6.5}
+xyplot(Length ~ Time, Leaves,
+xlab = "Days", type = c("a", "g", "p"),
+ylab = "Leaf length (cm)", col = 'darkslategray4', lwd = 2,pch = 19,
+auto.key = list(space = "top", columns = 2))
+```
+
+
+
+# Model definition
+
+
+A growth model for a single variable can be formalized  as: 
+
+
+
+$$y_i  = f(t_i, \theta) + \epsilon_i, \ \ \ \ \ \ i = 1,\dots,n$$ 
+where $y_i$ is the observed length $n$ is total number of observations; $\theta$ is the vector of unknown parameters and $t_i$ is the time at which the *i-th* observation was taken.
+
+
+Moreover, $\epsilon_i \sim N(0,\sigma^2 )$ is independent random error of $y_i$ and $f(t_i, \theta)$ is characteristic for each model.
+
+
+1. Gompertz model:
+
+
+$$f_1(t_i, \theta_1) = y_{asym} \exp \{-\exp [-k(t_i-t_m)] \}$$
+
+where $\theta_1 = (y_{asym},k, t_m)$
+
+
+2. Richards model:
+
+$$f_2(t_i, \theta_2) = \frac{y_{asym}}{\Big(1 + v \cdot \exp [-k(t_i-t_m)]\Big)^{1/v}}$$
+
+where $\theta_1 = (y_{asym},k, t_m,v)$
+
+
+
+3. Logistic model:
+
+$$f_3(t_i, \theta_3) = \frac{y_{asym}}{1 + \exp [-k(t_i-t_m)]}$$
+
+where $\theta_3 = (y_{asym},k, t_m)$
+
+
+
+
+
+
+In the above models, $y_{asym}$ represents the asymptotic leaf length, $k$ controls the steepness of the curve, $t_m$ is the inflection point at which the growth rate is maximized and $v$ deals with the asymmetric growth[Archontoulis et al.[^1]].
+
+
+
+Therefore we assume that:
+
+$$Y_i \mid \theta_k, t_i\sim N(\mu_k, \sigma^2)$$
+with $\mu_k = f_k(t_i, \theta_k)$, $k = 1,2,3$. 
+
+
+
+As a consequence, the likelihood function will be: 
+
+
+$$L(y\mid\theta_k, t,\sigma^2) = \frac{1}{(2\pi)^{n/2}\sigma^n}\exp\Bigg[-\frac{1}{2\sigma^2}\sum_{i=1}^n \Big(y_i - f_k(t_i,\theta_k)\Big)^2\Bigg]$$
+
+
+
+
+
+# Frequentist approach 
+
+Now we are interested to estimate parameters of the models above with the classical approach using NLS methods. 
+
+We start with logistic model: we are going to use a \texttt{selfStart} model which evaluates the logistic function and its gradient in an efficient way. 
+
+Note that the \texttt{scal} parameter (implemented in the \texttt{R} function) is the inverse of our parameter $k$.
+
+```{r}
+logistic_fit =  nls(Length ~ SSlogis(Time, Asym, tm, scal), data = Leaves)
+summary(logistic_fit)
+```
+
+
+
+
+We are going to exploit the logistic starting parameters (implemented due to \texttt{SSlogis} function) in the remaining models.
+
+Then, we fit Richard model: 
+
+
+```{r}
+richard_fit = nls(Length ~ Asym/(1+exp(-(Time - tm)/scal))^exp(-v), data = Leaves, 
+                  start = c(coef(logistic_fit),c(v = 0)))
+summary(richard_fit)
+```
+
+Finally, Gompertz model: 
+
+
+```{r}
+gompertz_fit = nls(Length ~ Asym*exp(-exp(-(Time - tm)/scal)), data = Leaves, 
+                   start = coef(logistic_fit))
+summary(gompertz_fit)
+```
+
+Here a summary plots that show how the curves with those estimated parameters fit the data points.
+
+
+
+```{r,echo=FALSE,fig.show="hold", out.width="33%"}
+plotfit(logistic_fit, xlab = "Days",
+ylab = "Leaf length (cm)", main = "Logistic growth model", pch = 19)
+plotfit(richard_fit, xlab = "Days",
+ylab = "Leaf length (cm)", main = "Richard growth model", pch = 19)
+plotfit(gompertz_fit, xlab = "Days",
+ylab = "Leaf length (cm)", main = "Gompertz growth model", pch = 19, add = T)
+
+```
+
+We may use the AIC and BIC[^2] criterion for the models' evaluation: 
+
+```{r,echo=FALSE}
+
+t1 = data.frame(AIC(logistic_fit,richard_fit,gompertz_fit))
+row.names(t1) = c('Logistic','Richard', 'Gompertz')
+t2 = BIC(logistic_fit,richard_fit,gompertz_fit)
+t1$BIC = t2[,2]
+
+kable(t1)
+```
+
+[^2]: AIC: Akaike information criterion; BIC: Bayesian information criterion.
+
+As we can see from the outputs above all the models leads to similar results: residual standard errors are low (about 0.70) for logistic and for Richard model, while they are over 1 for the last model. All parameters are statistically significant except for parameter $v$ in Richard model (it has a high standard error).
+
+
+Moreover also from the plots we can see that all the models seem to fit well the data points, however it is possible to see how the fitted curve obtained with Gompertz model is worse than the others specifically for leaf length in the initial days. 
+
+To sum up, we may conclude to prefer Logistic and Richard models and also AIC and BIC criteria confirm that.  
+
+
+\begin{longtable}[c]{|c|ccc|c|l|l|}
+\caption{NLS estimation results for the three growth functions}
+\label{tab:my-table}\\
+\hline
+Model                     & \multicolumn{1}{l|}{Parameter} & \multicolumn{1}{c|}{Estimate} & \begin{tabular}[c]{@{}c@{}}Standard Error \\ (SE)\end{tabular} & \begin{tabular}[c]{@{}c@{}}Residual\\ standard error\end{tabular} & \multicolumn{1}{c|}{AIC}  & \multicolumn{1}{c|}{BIC}  \\ \hline
+\endhead
+%
+\hline
+\endfoot
+%
+\endlastfoot
+%
+\multirow{3}{*}{Logistic} & Asym                           & 21.5089                       & 0.4154                                                         & \multirow{3}{*}{0.7194}                                           & \multirow{3}{*}{37.34040} & \multirow{3}{*}{40.17260} \\
+                          & tm                             & 6.3604                        & 0.1388                                                         &                                                                   &                           &                           \\
+                          & scal                           & 1.6072                        & 0.1152                                                         &                                                                   &                           &                           \\ \hline
+\multirow{4}{*}{Richard}  & Asym                           & 21.2040                       & 0.4436                                                         & \multirow{4}{*}{0.7086}                                           & \multirow{4}{*}{37.58090} & \multirow{4}{*}{41.12116} \\
+                          & tm                             & 7.3234                        & 0.7298                                                         &                                                                   &                           &                           \\
+                          & scal                           & 1.2866                        & 0.2953                                                         &                                                                   &                           &                           \\
+                          & v                              & 0.4817                        & 0.4110                                                         &                                                                   &                           &                           \\ \hline
+\multirow{3}{*}{Gompertz} & Asym                           & 22.5066                       & 0.8372                                                         & \multirow{3}{*}{1.024}                                            & \multirow{3}{*}{47.94153} & \multirow{3}{*}{50.77373} \\
+                          & tm                             & 5.4268                        & 0.1944                                                         &                                                                   &                           &                           \\
+                          & scal                           & 2.5765                        & 0.3047                                                         &                                                                   &                           &                           \\ \hline
+\end{longtable}
+
+
+
+# Bayesian approach 
+
+
+
+In order to develop a Bayesian analysis and make inference for our parameters, we need to firstly define some main ingredients.
+
+We need to define and propose prior distributions for our parameters $y_{asym}$, $k$, $t_m$ and, if necessary, $v$  and choose respectively hyperparameters for their distribution. 
+
+The following non-informative prior distributions are proposed: 
+
+* $y_{asym} \sim N(0,1000) \cdot \mathbb{I}(1,\infty)$
+
+* $k \sim Unif(0,1)$
+
+* $t_m \sim N(0,1000) \cdot \mathbb{I}(1,\infty)$
+
+* $v \sim Unif(0,1)$
+
+Lastly, for the error variances $\sigma^2$ we may choose an inverse gamma distribution: $\sigma^2  \sim InvGamma(0.01,0.01)$ 
+
+
+
+Now we are ready to proceed with the implentation of Gibbs sampling algorithm using \texttt{JAGS} tool in order to estimate our parameters for each model. 
+
+We have to prepare data for jags: 
+
+```{r, message=FALSE, results='hide', warning=FALSE}
+library(R2jags)
+N = nrow(Leaves)
+data4jags = list('Y'=Leaves$Length, 'N'=N, 't'=Leaves$Time)
+```
+
+
+\newpage
+
+## Logistic model 
+
+
+Model definition: 
+```{r}
+cat('model {
+  for( i in 1:N ) {
+  Y[i] ~ dnorm(mu[i], precision)
+  mu[i] <- Asym / (1+exp(-k*(t[i]-tm)))
+  }
+  Asym ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	tm ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	k ~ dbeta(1.0, 1.0)
+	precision ~ dgamma(0.01, 0.01)
+
+	sigma <- 1 / sqrt(precision)
+
+}',file = 'logistic_model.txt')
+
+
+```
+
+
+
+```{r}
+inits1=list(Asym = 10, tm = 10, k = .1) 
+inits2=list(Asym = 1, tm = 1, k = .5) 
+inits=list(inits1,inits2)
+param = c("Asym","tm","k","sigma")
+```
+
+
+```{r, message=FALSE, results='hide', warning=FALSE}
+logistic_jags = jags(data=data4jags, parameters.to.save=param, 
+                     model.file='logistic_model.txt', n.chains=2, 
+                     n.iter=10000,n.burnin = 1000,n.thin = 10)
+
+```
+```{r}
+logistic_jags
+```
+
+
+
+```{r, message=FALSE, results='hide', warning=FALSE, echo=FALSE}
+library(ggmcmc)
+library(bayesplot)
+```
+\newpage
+
+Below, it is reported a summary of the parameter chains (traceplots on the right column) and the density plots of their distribution. 
+```{r, fig.height=8}
+chain = logistic_jags$BUGSoutput$sims.array
+mcmc_combo(chain)
+```
+\newpage
+
+
+**Running means**
+
+
+With the plot below, we are able to see the behavior of the average for each parameter through iterations. We can observe that all the estimated means converge after a large number of iteration, no matter of the starting point of the Gibbs sampler. 
+
+```{r, fig.height=7}
+coda_logistic = as.mcmc(logistic_jags) 
+ggs_chain = ggs(coda_logistic) 
+ggs_running(ggs_chain)
+```
+
+
+
+
+
+
+
+\newpage
+## Richard model 
+
+Model definition: 
+```{r}
+cat('model {
+  for( i in 1:N ) {
+  Y[i] ~ dnorm(mu[i], precision)
+  mu[i] <- Asym / pow(1+v*exp(-k*(t[i]-tm)), (1/v))
+  }
+  Asym ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	tm ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	v ~ dbeta(1.0, 1.0)
+	k ~ dbeta(1.0, 1.0)
+	precision ~ dgamma(0.01, 0.01)
+
+	sigma <- 1 / sqrt(precision)
+
+}',file = 'richard_model.txt')
+
+```
+
+
+
+```{r}
+inits1=list(Asym = 10, tm = 10, k = .1, v = .1) 
+inits2=list(Asym = 1, tm = 1, k = .5, v = .5) 
+inits=list(inits1,inits2)
+param = c("Asym","tm","k","sigma","v")
+```
+
+
+```{r, message=FALSE, results='hide', warning=FALSE}
+richard_jags = jags(data=data4jags, parameters.to.save=param, 
+                    model.file='richard_model.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+```
+```{r}
+richard_jags
+```
+
+\newpage
+
+In the following plots there are shown density plots of the parameter distributions (on the left) and the respective traceplots (on the right).
+
+```{r,fig.height=8}
+chain = richard_jags$BUGSoutput$sims.array
+mcmc_combo(chain)
+```
+\newpage
+
+
+**Running means**
+
+
+Here we can see the behavior of the running means and from that we can state that all the estimated means converge after a large number of iteration, independently from the starting point of the Gibbs algorithm.
+
+```{r, fig.height=7}
+coda_richard = as.mcmc(richard_jags) 
+ggs_chain = ggs(coda_richard) 
+ggs_running(ggs_chain)
+```
+
+
+
+\newpage
+## Gompertz model 
+
+Model definition: 
+```{r}
+cat('model {
+  for( i in 1:N ) {
+  Y[i] ~ dnorm(mu[i], precision)
+  mu[i] <- Asym * exp(-exp(-k*(t[i]-tm)))
+  }
+  Asym ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	tm ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	k ~ dbeta(1.0, 1.0)
+	precision ~ dgamma(0.01, 0.01)
+
+	sigma <- 1 / sqrt(precision)
+
+}',file = 'gompertz_model.txt')
+
+```
+
+
+
+```{r}
+inits1=list(Asym = 10, tm = 10, k = .1) 
+inits2=list(Asym = 1, tm = 1, k = .5) 
+inits=list(inits1,inits2)
+param = c("Asym","tm","k","sigma")
+```
+
+
+```{r,message=FALSE, results='hide', warning=FALSE}
+gompertz_jags= jags(data=data4jags, parameters.to.save=param, 
+                    model.file='gompertz_model.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+```
+```{r}
+gompertz_jags
+```
+
+\newpage
+
+
+There is reported a summary of the parameter chains (traceplots on the right column) and the density plots of their distribution. 
+
+
+```{r, fig.height=8}
+chain = gompertz_jags$BUGSoutput$sims.array
+mcmc_combo(chain)
+```
+
+
+\newpage
+
+
+**Running means**
+
+
+Here running means are shown below and from that we can observe that all the estimated means converge after a large number of iteration, whatever was the starting point of the Gibbs sampler.
+```{r,fig.height=7}
+coda_gompertz = as.mcmc(gompertz_jags) 
+ggs_chain = ggs(coda_gompertz) 
+ggs_running(ggs_chain)
+```
+
+
+
+
+
+
+\newpage
+## Approximation error
+
+In order to evaluate the accuracy of the estimates we need to quantify the approximation error for each estimated parameter. To do that we may compute the variance of $\hat{I}_t$, taking into account the dependence structure of MCMC.
+
+From the theory it can be derived that the variance of the empirical mean can be approximated by the Monte Carlo error ($Error_{MC} =\frac{\sigma^2}{T}$) times the inefficiency factor of the Markov Chain (which is equal to $1+2  \sum_{h=1}^{\infty}\rho_h$). The inefficiency factor is used to compute the effective sample size $ESS = \frac{T}{1+2  \sum_{h=1}^{\infty}\rho_h}$.
+
+Thus, it follows that:
+$$\mathbb{V}(\hat{I}_t) = \frac{\sigma^2}{T}\Big[1+2  \sum_{h=1}^{T-1}\frac{T-h}{T}\rho_h\Big] \approx\frac{\sigma^2}{T}\Big[1+2  \sum_{h=1}^{\infty}\rho_h\Big] = \frac{\mathbb{V}(h(X))}{ESS}$$
+where $\rho_h$ is the autocorrelation function. 
+
+
+Moreover, the error effects the accuracy of parameter estimates: if the chain is too dependent, the ESS will be small, the error will be large and resulting estimates will not be accurate (and viceversa).
+
+Let's see the MC errors for all the models that we have fitted. 
+
+
+**Logistic model**
+
+```{r, echo=FALSE}
+for (i in c(1,2,3,4)){
+param = c("Asym","tm","k","sigma")
+var=var(unlist(logistic_jags$BUGSoutput$sims.list[i]))/
+  effectiveSize(unlist(logistic_jags$BUGSoutput$sims.list)) 
+cat("\n","MC error of",param[i], ":",sqrt(var))
+}
+```
+
+
+
+**Richard model**
+
+```{r, echo=FALSE}
+for (i in c(1,2,3,4,5)){
+param = c("Asym","tm","k","sigma","v")
+var=var(unlist(richard_jags$BUGSoutput$sims.list[i]))/
+  effectiveSize(unlist(richard_jags$BUGSoutput$sims.list)) 
+cat("\n","MC error of",param[i], ":",sqrt(var))
+}
+```
+
+
+**Gompertz model**
+
+
+```{r, echo=FALSE}
+for (i in c(1,2,3,4)){
+param = c("Asym","tm","k","sigma")
+var=var(unlist(gompertz_jags$BUGSoutput$sims.list[i]))/
+  effectiveSize(unlist(gompertz_jags$BUGSoutput$sims.list)) 
+cat("\n","MC error of",param[i], ":",sqrt(var))
+}
+```
+
+
+## Comparison between 3 models
+
+
+
+There exist a variety of methodologies to compare models for a given data set and to select the one that best fits the data. In this case, we are going to compare models using a Bayesian measure of fit, DIC[^3] criterion, which is a tool that is used for model assessment and provides a Bayesian alternative to classical criteria AIC and BIC[^2]. 
+
+This statistic takes into account the number of unknown parameters in the model and it can be seen as a generalization of the AIC.
+
+
+
+$$DIC = 2\bar{D}-D(\bar{\theta_i})$$
+
+where $\bar{D} = -2\int \log [p(y\mid \theta_i)] p(\theta_i \mid y)d\theta_i$ and $D(\bar{\theta_i}) ) = -2 \log [p(y\mid \hat{\theta_i})]$.
+
+
+According to this criteria the model that fits best the data is the Logistic model (with $DIC \simeq 40$ ), followed by Richards and Gompertz.   
+
+
+[^3]: DIC: deviance information criterion.
+
+
+Moreover, it could be interesting also to check visually how the growth curves fit the data, exploiting posterior mean of parameters to get the curves. 
+
+```{r, echo=FALSE}
+# Logistic model posterior mean
+Asym_hat_log = logistic_jags$BUGSoutput$mean$Asym
+tm_hat_log = logistic_jags$BUGSoutput$mean$tm
+k_hat_log =  logistic_jags$BUGSoutput$mean$k
+sigma_hat_log = logistic_jags$BUGSoutput$mean$sigma
+
+# Richard model posterior mean
+Asym_hat_rich = richard_jags$BUGSoutput$mean$Asym
+tm_hat_rich = richard_jags$BUGSoutput$mean$tm
+k_hat_rich =  richard_jags$BUGSoutput$mean$k
+v_hat_rich =  richard_jags$BUGSoutput$mean$v
+sigma_hat_rich = richard_jags$BUGSoutput$mean$sigma
+
+# Gompertz model posterior mean
+Asym_hat_gomp = gompertz_jags$BUGSoutput$mean$Asym
+tm_hat_gomp = gompertz_jags$BUGSoutput$mean$tm
+k_hat_gomp =  gompertz_jags$BUGSoutput$mean$k
+sigma_hat_gomp = gompertz_jags$BUGSoutput$mean$sigma
+```
+
+```{r, echo=FALSE}
+#Functions for curves
+logistic = function(x){
+  return(Asym_hat_log /(1+ exp(-(x - tm_hat_log)*k_hat_log)))
+}
+
+richard = function(x){
+  return(Asym_hat_rich /(1+v_hat_rich * exp(-(x - tm_hat_rich)*k_hat_rich))^(1/v_hat_rich))
+}
+
+gompertz = function(x){
+  return(Asym_hat_gomp*exp(-exp(-(x - tm_hat_gomp)*k_hat_gomp)))
+}
+
+```
+
+
+```{r, message=FALSE,warning=FALSE, fig.show="hold", out.width="33%", echo=FALSE}
+plot(Leaves$Time, Leaves$Length, pch = 19, col = 'darkslategray4',xlab = "Days",
+ylab = "Leaf length (cm)", main = "Logistic growth model - Bayesian",ylim = c(0,22)) 
+curve(logistic(x), 0,15, add = T, col = 'coral',  lwd = 2)
+plot(Leaves$Time, Leaves$Length, pch = 19, col = 'darkslategray4',xlab = "Days",
+ylab = "Leaf length (cm)", main = "Richard growth model - Bayesian",ylim = c(0,22)) 
+curve(richard(x), 0,15, add = T, col = 'violet',  lwd = 2)
+plot(Leaves$Time, Leaves$Length, pch = 19, col = 'darkslategray4',xlab = "Days",
+ylab = "Leaf length (cm)", main = "Gompertz growth model - Bayesian",ylim = c(0,22)) 
+curve(gompertz(x), 0,15, add = T, col = 'deeppink',  lwd = 2)
+
+```
+
+Also from the plots above we are able to see the difference in the fitting curve between the one of the Gompertz model and the two first ones (that would be overlapped).
+
+Thus, we can clearly state that we prefer Logistic and Richard models, but in particular the first one, according to DIC criterion. 
+
+
+
+\begin{longtable}[c]{|c|ccccc|c|}
+\caption{Posterior summary statistics for the three growth functions obtained with Gibs sampling algorithm}
+\label{gibs}\\
+\hline
+Model                     & \multicolumn{1}{l|}{Parameter} & \multicolumn{1}{c|}{Posterior Mean} & \multicolumn{1}{c|}{Sd} & \multicolumn{1}{l|}{MC Error} & \begin{tabular}[c]{@{}c@{}}95\% Credible Interval \\ {[}2.50\%,97.50\%{]}\end{tabular} & DIC                   \\ \hline
+\endhead
+%
+\hline
+\endfoot
+%
+\endlastfoot
+%
+\multirow{4}{*}{Logistic} & Asym                           & 21.506                    & 0.468                   & 0.32435                       & {[}20.612,  22.427{]}                                                                  & \multirow{4}{*}{40.0} \\
+                          & tm                             & 6.359                     & 0.154                   & 2.3005                        & {[}6.055, 6.666{]}                                                                     &                       \\
+                          & k                              & 0.629                     & 0.053                   & 0.03701                       & {[}0.533, 0.745{]}                                                                     &                       \\
+                          & $\sigma^2$                     & 0.775                     & 0.178                   & 0.11547                       & {[}0.516, 1.177{]}                                                                     &                       \\ \hline
+\multirow{5}{*}{Richard}  & Asym                           & 21.684                    & 0.581                   & 0.3232                        & {[}20.675, 22.929{]}                                                                   & \multirow{5}{*}{44.0} \\
+                          & tm                             & 6.197                     & 0.229                   & 2.2225                        & {[}5.649,  6.590{]}                                                                    &                       \\
+                          & k                              & 0.575                     & 0.072                   & 0.04125                       & {[}0.424, 0.705{]}                                                                     &                       \\
+                          & v                              & 0.769                     & 0.194                   & 0.11292                       & {[}0.271,  0.991{]}                                                                    &                       \\
+                          & $\sigma^2$                     & 0.829                     & 0.200                   & 0.1353                        & {[}0.551, 1.310{]}                                                                     &                       \\ \hline
+\multirow{4}{*}{Gompertz} & Asym                           & 22.536                    & 0.946                   & 0.642                         & {[}20.826,  24.598{]}                                                                  & \multirow{4}{*}{49.8} \\
+                          & tm                             & 5.441                     & 0.220                   & 2.2804                        & {[}5.018,  5.886{]}                                                                    &                       \\
+                          & k                              & 0.396                     & 0.057                   & 0.03907                       & {[}0.303,  0.530{]}                                                                    &                       \\
+                          & $\sigma^2$                     & 1.093                     & 0.244                   & 0.1690                        & {[}0.733, 1.657{]}                                                                     &                       \\ \hline
+\end{longtable}
+
+
+\newpage
+# Diagnostics
+
+In order to verify the correctness of the MCMC structure produced by the Gibbs sampler (\texttt{jags} in our case), we may decide to run 2 different tests: Geweke Diagnostic Test and Heidelberger & Welch Diagnostic Test
+
+
+We may exploit the functions in R available in the \texttt{coda} package.
+
+
+## Geweke Diagnostic Test
+
+Geweke test is a convergence diagnostic for Markov chains. The aim of the test proposed by Geweke is to compare the means of the first and last part of a Markov chain (by default the first 10% and the last 50%). If the samples are drawn from a stationary distribution of the chain (as we would like to be!), then the two means are equal. Therefore, the test statistic that has been used in this case is a standard Z-score with the assumption of asymptotically independence of the two parts of the chain.
+
+
+**Logistic model**
+
+```{r}
+geweke.diag(coda_logistic)
+geweke.plot(coda_logistic)
+```
+
+
+**Richard model**
+
+```{r}
+geweke.diag(coda_richard)
+geweke.plot(coda_richard)
+```
+
+
+**Gompertz model**
+
+```{r}
+geweke.diag(coda_gompertz)
+geweke.plot(coda_gompertz)
+```
+
+
+
+
+## Heidelberger & Welch Diagnostic Test
+
+
+This diagnostic test is divided in two steps.
+
+1. The convergence test uses the Cramer-von-Mises statistic to test the null hypothesis that the sampled values come from a stationary distribution. In particular the same test is performed sequencially: firstly for the whole chain, then after discarding the first 10%, 20%, ... of the chain until either the null hypothesis is accepted. If we need to discard the first 50% of the chain to pass the test, it means that the chain is not stationary and indicates that a longer MCMC run is needed.
+
+
+2. The half-width test calculates a 95% confidence interval for the mean, using the portion of the chain which passed the stationary test. The test is passed if the ratio between the half-width and the mean is lower than *eps*. 
+
+
+**Logistic model**
+
+
+```{r}
+heidel.diag(coda_logistic)
+```
+
+
+**Richard model**
+
+
+```{r}
+heidel.diag(coda_richard)
+```
+
+
+**Gompertz model**
+
+```{r}
+heidel.diag(coda_gompertz)
+```
+
+\newpage
+# Evaluation of predictive perfomance of the three models
+
+In this last section, we are interested in evaluating predictive performance of our three models. 
+
+In order to do that, we firstly need to modify the model definition in \texttt{jags} to run the Gibbs algorithm. 
+
+
+Here there is shown the new model for logistic model. 
+
+```{r, results='hide'}
+
+cat('model {
+      for( i in 1:N ) {
+      Y[i] ~ dnorm(mu[i], precision)
+      mu[i] <- Asym / (1+exp(-k*(t[i]-tm)))
+      
+      Ypred[i] ~ dnorm(condexp[i], precision)
+    	condexp[i]  <- Asym / (1+exp(-k*(t[i]-tm)))
+      }
+      
+      Asym ~ dnorm(0.0, 1.0E-3)I(1.0,)
+    	tm ~ dnorm(0.0, 1.0E-3)I(1.0,)
+    	k ~ dbeta(1.0, 1.0)
+    	precision ~ dgamma(0.01, 0.01)
+    
+    	sigma <- 1 / sqrt(precision)
+    
+  }',file = 'logistic_model_pred.txt')
+
+```
+
+
+```{r,results='hide',include=FALSE}
+log_pred_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred',"condexp"), 
+                    model.file='logistic_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+```
+```{r, echo=FALSE}
+print(log_pred_jags)
+```
+
+We may do the same procedure also for the other two models. 
+
+```{r}
+cat('model {
+  for( i in 1:N ) {
+    Y[i] ~ dnorm(mu[i], precision)
+    mu[i] <- Asym / pow(1+v*exp(-k*(t[i]-tm)), (1/v))
+    
+    Ypred[i] ~ dnorm(condexp[i], precision)
+    condexp[i]  <-  Asym / pow(1+v*exp(-k*(t[i]-tm)), (1/v))
+  }
+  
+  Asym ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	tm ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	v ~ dbeta(1.0, 1.0)
+	k ~ dbeta(1.0, 1.0)
+	precision ~ dgamma(0.01, 0.01)
+
+	sigma <- 1 / sqrt(precision)
+
+}', file = 'richard_model_pred.txt')
+
+cat('model {
+  for( i in 1:N ) {
+    Y[i] ~ dnorm(mu[i], precision)
+    mu[i] <- Asym * exp(-exp(-k*(t[i]-tm)))
+    
+    Ypred[i] ~ dnorm(condexp[i], precision)
+    condexp[i]  <- Asym * exp(-exp(-k*(t[i]-tm)))
+  }
+  
+  Asym ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	tm ~ dnorm(0.0, 1.0E-3)I(1.0,)
+	k ~ dbeta(1.0, 1.0)
+	precision ~ dgamma(0.01, 0.01)
+
+	sigma <- 1 / sqrt(precision)
+
+}', file = 'gompertz_model_pred.txt')
+```
+
+Then, run the \texttt{jags}.
+
+```{r, results='hide',include=FALSE}
+rich_pred_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred',"condexp"), 
+                    model.file='richard_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+gomp_pred_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred',"condexp"), 
+                    model.file='gompertz_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+```
+
+
+The plots above compare the observed data points with the predicted leaf length with respect to the time (in days) for the three different models. Predicted data points are obtained with the point estimates of the parameter $Y_{pred}$ of the Gibbs. 
+
+```{r,echo=FALSE}
+predictions_log = log_pred_jags$BUGSoutput$mean$Ypred
+predictions_rich = rich_pred_jags$BUGSoutput$mean$Ypred
+predictions_gomp = gomp_pred_jags$BUGSoutput$mean$Ypred
+```
+
+```{r, echo=FALSE}
+mse = sqrt(mean((Leaves$Length-(predictions_log))**2,na.rm = TRUE)) 
+plot(Leaves$Time, Leaves$Length, pch = 19, col = 'darkslategray4',xlab = "Days",
+ylab = "Leaf length (cm)", main = paste('Comparing data points with predictions - Logistic model\nMSE = ',round(mse,2)),ylim = c(0,22), font.main = 1,cex.lab = .8, cex.main = 1) 
+points(Leaves$Time,predictions_log, col = 'coral',  pch = 19)
+legend('topleft', legend =c('Observed data', 'Predictions'), pch = 19, col = c('darkslategray4','coral'),bty = 'n')
+
+mse = sqrt(mean((Leaves$Length-(predictions_rich))**2,na.rm = TRUE)) 
+plot(Leaves$Time, Leaves$Length, pch = 19, col = 'darkslategray4',xlab = "Days",
+ylab = "Leaf length (cm)",main = paste('Richard model\nMSE = ',round(mse,2)),ylim = c(0,22), font.main = 1,cex.lab = .8, cex.main = 1) 
+points(Leaves$Time,predictions_rich, col = 'violet',  pch = 19)
+legend('topleft', legend =c('Observed data', 'Predictions'), pch = 19, col = c('darkslategray4','violet'),bty = 'n')
+
+
+mse = sqrt(mean((Leaves$Length-(predictions_gomp))**2,na.rm = TRUE)) 
+plot(Leaves$Time, Leaves$Length, pch = 19, col = 'darkslategray4',xlab = "Days",
+ylab = "Leaf length (cm)", main = paste('Gompertz model\nMSE = ',round(mse,2)),ylim = c(0,22), font.main = 1,cex.lab = .8, cex.main = 1) 
+points(Leaves$Time,predictions_gomp, col = 'deeppink',  pch = 19)
+legend('topleft', legend =c('Observed data', 'Predictions'), pch = 19, col = c('darkslategray4','deeppink'),bty = 'n')
+
+```
+
+We may make some statements by observing the plots: 
+
+* Logistic and Richard model seem to lead to similar predictions, thus the MSE is between is smaller than 0.7 for both. On the other side MSE of Gompertz's predictions is a little bit higher (about 0.9).
+
+* Gompertz model fails more to predict the leaf lengths in the first and in the last period. Specifically, it tends to underestimate lengths in first days, while they are overestimated after 14 days. 
+
+These aspects could be double checked with computing the approximation errors of estimates in different time. 
+
+For that, we are interested in doing prediction on the length of the leaf after a fixed number of days and see the error associated to that prediction. 
+
+Let's select three times (days) after which we would like to predict the leaf length: 
+
+1. at the beginning of the measurement: t = 1.5  (the second measurement)
+
+2. approximately near the *inflation* point: t =  7.5 (the central measurement)
+
+3. in the last period: t = 13.5 (second last measurement)
+
+
+```{r, results='hide',include=FALSE}
+log_pred1_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred[2]',"condexp[2]"), 
+                    model.file='logistic_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+rich_pred1_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'v','Ypred[2]',"condexp[2]"), 
+                    model.file='richard_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+gomp_pred1_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred[2]',"condexp[2]"), 
+                    model.file='gompertz_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+
+log1 = as.mcmc(log_pred1_jags)
+rich1 = as.mcmc(rich_pred1_jags)
+gomp1 = as.mcmc(gomp_pred1_jags)
+```
+
+
+```{r, echo=FALSE}
+plot(density(log1[[1]][,'Ypred[2]']),main="Prediction for leaf lenght after 1.5 days with different models", col = 'coral', lwd = 2, font.main =1, xlim = c(-3,6), xlab = 'Leaf length (cm)',cex.lab = .8, cex.main = 1)
+lines(density(rich1[[1]][,'Ypred[2]']), col = 'violet', lwd = 2)
+lines(density(gomp1[[1]][,'Ypred[2]']), col = 'deeppink', lwd = 2)
+legend('topright', col = c('coral','violet', 'deeppink'), legend = c('Logistic','Richard','Gompertz'),cex=.7,bty='n',lty = 1)
+```
+
+Now we are going to repeat the same steps in order to evaluate predictions in the other other two fixed times of the growth. 
+
+```{r, results='hide', echo=FALSE,include=FALSE}
+log_pred2_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred[8]',"condexp[8]"), 
+                    model.file='logistic_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+rich_pred2_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'v','Ypred[8]',"condexp[8]"), 
+                    model.file='richard_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+gomp_pred2_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred[8]',"condexp[8]"), 
+                    model.file='gompertz_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+
+log2 = as.mcmc(log_pred2_jags)
+rich2 = as.mcmc(rich_pred2_jags)
+gomp2 = as.mcmc(gomp_pred2_jags)
+```
+
+
+```{r, echo=FALSE}
+plot(density(log2[[1]][,'Ypred[8]']),main="Prediction for leaf lenght after 7.5 days with different models", col = 'coral', lwd = 2, font.main =1, xlab = 'Leaf length (cm)',cex.lab = .8, cex.main = 1)
+lines(density(rich2[[1]][,'Ypred[8]']), col = 'violet', lwd = 2)
+lines(density(gomp2[[1]][,'Ypred[8]']), col = 'deeppink', lwd = 2)
+legend('topright', col = c('coral','violet', 'deeppink'), legend = c('Logistic','Richard','Gompertz'),cex=.7,bty='n',lty = 1)
+```
+
+```{r, results='hide', echo=FALSE,include=FALSE}
+log_pred3_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred[14]',"condexp[14]"), 
+                    model.file='logistic_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+rich_pred3_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'v','Ypred[14]',"condexp[14]"), 
+                    model.file='richard_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+gomp_pred3_jags = jags(data=data4jags, parameters.to.save=c( "Asym" ,"tm","k" ,"sigma",'Ypred[14]',"condexp[14]"), 
+                    model.file='gompertz_model_pred.txt', n.chains=2, 
+                    n.iter=10000,n.burnin = 1000,n.thin = 10)
+
+log3 = as.mcmc(log_pred3_jags)
+rich3 = as.mcmc(rich_pred3_jags)
+gomp3 = as.mcmc(gomp_pred3_jags)
+```
+
+
+```{r, echo=FALSE}
+plot(density(log3[[1]][,'Ypred[14]']),main="Prediction for leaf lenght after 13.5 days with different models", col = 'coral', lwd = 2, font.main =1, xlim = c(16,27), xlab = 'Leaf length (cm)', cex.lab = .8, cex.main = 1)
+lines(density(rich3[[1]][,'Ypred[14]']), col = 'violet', lwd = 2)
+lines(density(gomp3[[1]][,'Ypred[14]']), col = 'deeppink', lwd = 2)
+legend('topright', col = c('coral','violet', 'deeppink'), legend = c('Logistic','Richard','Gompertz'),cex=.7,bty='n',lty = 1)
+```
+
+
+
+```{r,echo=FALSE, include=FALSE}
+mc_errors = data.frame(matrix(NA,ncol = 3,nrow = 3))
+colnames(mc_errors) = c('Logistic model','Richard model', 'Gompertz model')
+rownames(mc_errors) = c('t = 1.5','t = 7.5','t = 13.5')
+# t = 1.5
+ESS_1_log <- LaplacesDemon::ESS(log_pred1_jags$BUGSoutput$sims.array[,1,"Ypred[2]"])
+e_1_log = sd(log_pred1_jags$BUGSoutput$sims.array[,1,"Ypred[2]"])/sqrt(ESS_1_log)
+ESS_1_rich <- LaplacesDemon::ESS(rich_pred1_jags$BUGSoutput$sims.array[,1,"Ypred[2]"])
+e_1_rich = sd(rich_pred1_jags$BUGSoutput$sims.array[,1,"Ypred[2]"])/sqrt(ESS_1_rich)
+ESS_1_gomp <- LaplacesDemon::ESS(gomp_pred1_jags$BUGSoutput$sims.array[,1,"Ypred[2]"])
+e_1_gomp = sd(gomp_pred1_jags$BUGSoutput$sims.array[,1,"Ypred[2]"])/sqrt(ESS_1_gomp)
+mc_errors[1,] = c(e_1_log,e_1_rich,e_1_gomp)
+# t = 7.5
+ESS_2_log <- LaplacesDemon::ESS(log_pred2_jags$BUGSoutput$sims.array[,1,"Ypred[8]"])
+e_2_log = sd(log_pred2_jags$BUGSoutput$sims.array[,1,"Ypred[8]"])/sqrt(ESS_2_log)
+ESS_2_rich <- LaplacesDemon::ESS(rich_pred2_jags$BUGSoutput$sims.array[,1,"Ypred[8]"])
+e_2_rich = sd(rich_pred2_jags$BUGSoutput$sims.array[,1,"Ypred[8]"])/sqrt(ESS_2_rich)
+ESS_2_gomp <- LaplacesDemon::ESS(gomp_pred2_jags$BUGSoutput$sims.array[,1,"Ypred[8]"])
+e_2_gomp = sd(gomp_pred2_jags$BUGSoutput$sims.array[,1,"Ypred[8]"])/sqrt(ESS_2_gomp)
+mc_errors[2,] = c(e_2_log,e_2_rich,e_2_gomp)
+# t = 13.5
+ESS_3_log <- LaplacesDemon::ESS(log_pred3_jags$BUGSoutput$sims.array[,1,"Ypred[14]"])
+e_3_log = sd(log_pred3_jags$BUGSoutput$sims.array[,1,"Ypred[14]"])/sqrt(ESS_3_log)
+ESS_3_rich <- LaplacesDemon::ESS(rich_pred3_jags$BUGSoutput$sims.array[,1,"Ypred[14]"])
+e_3_rich = sd(rich_pred3_jags$BUGSoutput$sims.array[,1,"Ypred[14]"])/sqrt(ESS_3_rich)
+ESS_3_gomp <- LaplacesDemon::ESS(gomp_pred3_jags$BUGSoutput$sims.array[,1,"Ypred[14]"])
+e_3_gomp = sd(gomp_pred3_jags$BUGSoutput$sims.array[,1,"Ypred[14]"])/sqrt(ESS_3_gomp)
+mc_errors[3,] = c(e_3_log,e_3_rich,e_3_gomp)
+
+```
+
+Here there are shown all the MC error for the previous predictions. As we may expected, Gompertz MC errors are higher for all the predictions and it performs worst in predicting the leaf length in t = 13.5. Logistic model is confirmed again to be the best one. 
+
+
+```{r, echo=FALSE}
+kable(mc_errors)
+```
+
+
+
+
+As we could imagine from the previous results, both in the evaluation of the models and in the prediction plots above, the models that lead to smallest errors are Logistic and Richard ones, while Gompertz model is the one that provides largest errors of the predictions (at some fixed time). This fact can be observed also from the posterior predictive density plots, where the curves that represent Logistic and Richard are more concentrated around the posterior mean of the prediction, while those ones of Gompertz are more 'flatted' and asymmetric too. 
+
+Moreover, predictions of the length of the leaf after few days (t = 1.5) are more accurate and this is true for all the models. 
+
+
+
+
+
+# Last remarks 
+
+To conclude, we could state that Logistic and Richard growth models provide equivalent results and work better than Gompertz function both in the classical (NLS) and in the Bayesian approach. Moreover, Logistic model obtained the best predictive performances. 
+
+From the two summary tables (Table 1 and Table 2)  we may highlight some aspects: 
+
+* in the Frequentist approach the parameter $t_m$ (which represents the inflection point at which the growth rate is maximized) has a small SE for all the models, while the MC error is quite large in the Bayesian set up; 
+
+* the parameter $v$ in Richard model has been estimated with a small approximation error (0.14371) with Gibbs, while it is not statistically significant (with a large SE) in the classical approach.   
+
+
+
+
+
+
